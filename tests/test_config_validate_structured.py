@@ -54,6 +54,7 @@ def _make_config(**kwargs) -> Config:
         discord_bot_token=None,
         discord_main_channel_id=None,
         discord_webhook_url=None,
+        discord_interactions_public_key=None,
         llm_channels=[],
         litellm_config_path=None,
         gemini_api_key=None,
@@ -185,7 +186,7 @@ class TestValidateStructuredLLM:
         """Empty llm_model_list must produce an error regardless of legacy keys."""
         cfg = _make_config(llm_model_list=[])
         issues = cfg.validate_structured()
-        assert any(i.severity == "error" and "LLM" in i.message for i in issues)
+        assert any(i.severity == "error" and "AI 模型" in i.message for i in issues)
 
     def test_llm_channels_only_no_error(self):
         """LLM_CHANNELS populated via llm_model_list must NOT trigger an error.
@@ -254,6 +255,8 @@ class TestValidateStructuredLLM:
         llm_issues = [i for i in issues if "LITELLM_MODEL" in i.field]
         assert llm_issues, "Expected an info issue about LITELLM_MODEL"
         assert all(i.severity == "info" for i in llm_issues)
+        assert all("LITELLM_MODEL" not in i.message for i in llm_issues)
+        assert any("主模型" in i.message for i in llm_issues)
 
     def test_direct_env_provider_model_without_model_list_no_error(self):
         """Direct LiteLLM env providers should count as configured for runtime."""
@@ -272,7 +275,10 @@ class TestValidateStructuredLLM:
             litellm_model="openai/gpt-4o",
         )
         issues = cfg.validate_structured()
-        assert any(i.severity == "error" and i.field == "LITELLM_MODEL" for i in issues)
+        matching_issues = [i for i in issues if i.severity == "error" and i.field == "LITELLM_MODEL"]
+        assert matching_issues
+        assert all("LITELLM_MODEL" not in i.message for i in matching_issues)
+        assert any("主模型" in i.message for i in matching_issues)
 
     def test_configured_agent_primary_model_missing_from_channels_is_error(self):
         cfg = _make_config(
@@ -496,6 +502,24 @@ class TestEnvAliasCompatibility:
 
         assert config.discord_main_channel_id == "main-channel"
 
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_discord_interactions_public_key_is_loaded(
+        self,
+        _mock_parse_yaml,
+        _mock_setup_env,
+    ):
+        with patch.dict(
+            "os.environ",
+            {
+                "DISCORD_INTERACTIONS_PUBLIC_KEY": "abcdef123456",
+            },
+            clear=True,
+        ):
+            config = Config._load_from_env()
+
+        assert config.discord_interactions_public_key == "abcdef123456"
+
 
 # ---------------------------------------------------------------------------
 # validate() backward compatibility
@@ -511,7 +535,7 @@ class TestValidateBackwardCompat:
     def test_empty_llm_model_list_message_in_validate(self):
         cfg = _make_config(llm_model_list=[])
         messages = cfg.validate()
-        assert any("LLM" in m for m in messages)
+        assert any("AI 模型" in m for m in messages)
 
     def test_messages_match_validate_structured(self):
         """validate() strings must be the message field of each ConfigIssue."""
